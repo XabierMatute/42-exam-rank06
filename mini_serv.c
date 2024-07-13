@@ -6,7 +6,7 @@
 /*   By: xmatute- <xmatute-@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2024/07/04 16:56:50 by xmatute-          #+#    #+#             */
-/*   Updated: 2024/07/13 13:50:24 by xmatute-         ###   ########.fr       */
+/*   Updated: 2024/07/13 16:24:40 by xmatute-         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -44,7 +44,7 @@ void    send_message(char *msg, int fd)
 
 void    broadcast_message(char *msg, int id)
 {
-    // printf("broadcasting: %s\n", msg);
+    printf("broadcasting: %s\n", msg);
     for (int fd = 0; fd <= nfds; fd++)
     {
         if (id != ids[fd])
@@ -155,7 +155,8 @@ int mini_serv(int port) // mainly main.c copypaste
     socklen_t   len; // needed because flags
 	struct sockaddr_in servaddr, cli;
 
-    char buf[424242];
+    char buf[65536];
+    
 
 	// socket create and verification 
 	sockfd = socket(AF_INET, SOCK_STREAM, 0); 
@@ -166,8 +167,8 @@ int mini_serv(int port) // mainly main.c copypaste
 
 	// assign IP, PORT 
 	servaddr.sin_family = AF_INET; 
-	// servaddr.sin_addr.s_addr = htonl(2130706433); //127.0.0.1
-    servaddr.sin_addr.s_addr = htonl((10 << 24) | (13 << 16) | (5 << 8) | 4);
+	servaddr.sin_addr.s_addr = htonl(2130706433); //127.0.0.1
+    // servaddr.sin_addr.s_addr = htonl((10 << 24) | (13 << 16) | (5 << 8) | 4);
 	servaddr.sin_port = htons(port); // PUT PORT HERE 
   
 	// Binding newly created socket to given IP and verification 
@@ -190,6 +191,9 @@ int mini_serv(int port) // mainly main.c copypaste
     memset(ids, -1, sizeof(ids));
     nids = 0;
 
+    char *dbuf[FD_SETSIZE];
+    bzero(dbuf, sizeof(dbuf));
+
     while (42)
     {
         // copy fds to readfds (needed because select modify the set (not cool))
@@ -206,6 +210,7 @@ int mini_serv(int port) // mainly main.c copypaste
             if (fd == sockfd) // new client
             {
                 // accept new client
+                printf("new client\n");
                 len = sizeof(cli);
                 int nfd = accept(sockfd, (struct sockaddr *)&cli, &len);
                 int id = nids++;
@@ -220,32 +225,43 @@ int mini_serv(int port) // mainly main.c copypaste
                 continue;
             }
             bzero(buf, sizeof(buf));
-            if (!recv(fd, buf, sizeof(buf), 0)) // client disconnected
+            if (!recv(fd, buf, sizeof(buf), 0) && !dbuf[fd]) // client disconnected
             {
                 // remove client
                 FD_CLR(fd, &fds); // remove from monitoreable fds
                 close(fd); // close fd
                 int id = ids[fd];
+                printf("client %d disconnected\n", id);
                 broadcast_exit_message(id);
                 ids[fd] = -1; // remove from ids
                 continue;
             }
-            else
+            dbuf[fd] = str_join(dbuf[fd], buf);
+            if (!dbuf[fd])
+                fatal_error();
+            if (dbuf[fd] || strstr(dbuf[fd], "\n"))
             {
                 // process message
                 int     id = ids[fd];
+                printf("processing message\n");
                 char    *msg = 0;
                 char    pmsg[42];
                 sprintf(pmsg, "client %d: ", id);
-                char   *dbuf = str_join(0, buf);
-                int  c = extract_message(&dbuf, &msg);
+                printf("dbuf: %s\n", dbuf[fd]);
+                int  c = extract_message(&(dbuf[fd]), &msg);
                 while (c)
                 {
                     broadcast_message(pmsg, id); // broadcast pre message
                     broadcast_message(msg, id); // broadcast message
                     free(msg); // free message
-                    c = extract_message(&dbuf, &msg);
+                    c = extract_message(&(dbuf[fd]), &msg);
                 }
+                if (dbuf[fd] && !dbuf[fd][0])
+                {
+                    free(dbuf[fd]);
+                    dbuf[fd] = 0;
+                }                
+                continue;
             }
         }
         
